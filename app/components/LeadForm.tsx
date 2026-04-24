@@ -365,6 +365,7 @@ export default function LeadForm() {
   const [form, setForm] = useState<LeadFormData>(EMPTY)
   const [status, setStatus] = useState<"idle" | "sending" | "success" | "error">("idle")
   const [errMsg, setErrMsg] = useState("")
+  const [submittedName, setSubmittedName] = useState("")
 
   const phoneDigits = form.phone.replace(/\D/g, "")
   const phoneValid = phoneDigits.length === 10
@@ -450,12 +451,41 @@ export default function LeadForm() {
         throw new Error(typeof data.error === "string" ? data.error : "Submission failed")
       }
 
+      setSubmittedName(form.has_nickname && form.nickname.trim() ? form.nickname.trim() : form.first_name.trim())
       setStatus("success")
       setForm(EMPTY)
     } catch (error) {
       setStatus("error")
       setErrMsg(error instanceof Error ? error.message : "Submission failed")
     }
+  }
+
+  if (status === "success") {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        gap: 24, padding: "56px 24px", textAlign: "center",
+        border: "1px solid rgba(168,85,247,0.2)", borderRadius: 18,
+        background: "rgba(255,255,255,0.01)",
+      }}>
+        <div style={{ fontSize: 48, lineHeight: 1 }}>✓</div>
+        <h2 style={{
+          margin: 0, fontSize: "clamp(22px, 4vw, 32px)", fontWeight: 900,
+          color: "var(--purple-light)", lineHeight: 1.2,
+        }}>
+          Thank you, {submittedName}!
+        </h2>
+        <p style={{
+          margin: 0, fontSize: 16, lineHeight: 1.75,
+          color: "rgba(240,238,255,0.6)", maxWidth: 420,
+        }}>
+          Your request has been received. We'll be in touch by text or email within 24 hours.
+        </p>
+        <p style={{ margin: 0, fontSize: 13, color: "rgba(240,238,255,0.28)", lineHeight: 1.6 }}>
+          Keep an eye out for a confirmation text — reply <strong style={{ color: "rgba(240,238,255,0.5)" }}>C</strong> to confirm your spot.
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -811,7 +841,6 @@ export default function LeadForm() {
         </label>
 
         {status === "error" ? <p style={{ margin: 0, fontSize: 13, color: "rgba(239,68,68,0.8)" }}>{errMsg}</p> : null}
-        {status === "success" ? <p style={{ margin: 0, fontSize: 13, color: "rgba(74,222,128,0.8)" }}>Submitted. For local preview, this may be a mock success if no webhook is attached yet.</p> : null}
 
         <button
           type="submit"
