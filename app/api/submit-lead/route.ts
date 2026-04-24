@@ -14,8 +14,37 @@ const REQUIRED = [
   "hear_about_us",
 ] as const
 
+const toString = (value: unknown) => typeof value === "string" ? value : ""
+const toStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+const toReferralArray = (value: unknown) =>
+  Array.isArray(value)
+    ? value.filter((item): item is { fullName?: string; dealership?: string; contactNumber?: string } =>
+        typeof item === "object" && item !== null,
+      )
+    : []
+
+async function sbPost(supabaseUrl: string, key: string, table: string, payload: Record<string, unknown>) {
+  const res = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": key,
+      "Authorization": `Bearer ${key}`,
+      "Prefer": "return=representation",
+    },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    throw new Error(`Supabase insert into ${table} failed (${res.status}): ${text}`)
+  }
+  return res.json() as Promise<Record<string, unknown>[]>
+}
+
 export async function POST(req: Request) {
-  const webhookUrl = process.env.N8N_WEBHOOK_URL
+  const supabaseUrl = process.env.SUPABASE_URL
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
   let body: Record<string, unknown>
   try {
@@ -29,14 +58,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `Missing required fields: ${missing.join(", ")}` }, { status: 400 })
   }
 
-  const toString = (value: unknown) => typeof value === "string" ? value : ""
-  const toStringArray = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
-  const toReferralArray = (value: unknown) =>
-    Array.isArray(value)
-      ? value.filter((item): item is { fullName?: string; dealership?: string; contactNumber?: string } =>
-          typeof item === "object" && item !== null,
-        )
-      : []
+  if (!supabaseUrl || !supabaseKey) {
+    return NextResponse.json({
+      ok: true,
+      mocked: true,
+      message: "Supabase not configured. Local preview submission accepted.",
+    })
+  }
 
   const referrals = toReferralArray(body.referrals)
     .map((row) => ({
@@ -46,99 +74,109 @@ export async function POST(req: Request) {
     }))
     .filter((row) => row.full_name || row.dealership || row.contact_number)
 
-  const normalizedPayload = {
-    source: "mi-leads-site",
-    submitted_at: new Date().toISOString(),
-    summary: {
-      full_name: `${toString(body.first_name).trim()} ${toString(body.last_name).trim()}`.trim(),
-      phone: toString(body.phone).trim(),
-      email: toString(body.email).trim(),
-      dealership_name: toString(body.dealership_name).trim(),
-      state: toString(body.state).trim(),
-      hear_about_us: toString(body.hear_about_us).trim(),
-    },
-    contact: {
-      first_name: toString(body.first_name).trim(),
-      last_name: toString(body.last_name).trim(),
-      has_nickname: Boolean(body.has_nickname),
-      nickname: toString(body.nickname).trim(),
-      phone: toString(body.phone).trim(),
-      email: toString(body.email).trim(),
-    },
-    licensing: {
-      sales_license: toString(body.sales_license).trim(),
-      license_process: toString(body.license_process).trim(),
-      experience: toString(body.experience).trim(),
-    },
-    pilot_preferences: {
-      wants_forum: toString(body.wants_forum).trim(),
-      wants_updates: toString(body.wants_updates).trim(),
-      beta_interest: toString(body.beta_interest).trim(),
-      nda_comfort: toString(body.nda_comfort).trim(),
-      phone_platform: toString(body.phone_platform).trim(),
-    },
-    dealership: {
-      dealership_name: toString(body.dealership_name).trim(),
-      address_line_1: toString(body.address_line_1).trim(),
-      address_line_2: toString(body.address_line_2).trim(),
-      city: toString(body.city).trim(),
-      state: toString(body.state).trim(),
-      postal: toString(body.postal).trim(),
-      specializations: toStringArray(body.specializations),
-      branded_dealership: toString(body.branded_dealership).trim(),
-      manufacturers: [
-        toString(body.manufacturer_primary).trim(),
-        toString(body.manufacturer_secondary).trim(),
-        toString(body.manufacturer_extra_1).trim(),
-        toString(body.manufacturer_extra_2).trim(),
-        toString(body.manufacturer_extra_3).trim(),
-        toString(body.manufacturer_extra_4).trim(),
-      ].filter(Boolean),
-      dealership_size: toString(body.dealership_size).trim(),
-      dealership_sales: toString(body.dealership_sales).trim(),
-      personal_sales: toString(body.personal_sales).trim(),
-      personal_specializations: toStringArray(body.personal_specializations),
-      limited_brands: toString(body.limited_brands).trim(),
-      limited_brand_names: toString(body.limited_brand_names).trim(),
-    },
-    attribution: {
-      hear_about_us: toString(body.hear_about_us).trim(),
-      referral_first_name: toString(body.referral_first_name).trim(),
-      referral_last_name: toString(body.referral_last_name).trim(),
-      knows_anyone: toString(body.knows_anyone).trim(),
-      referrals,
-    },
-    finishing_up: {
-      certify_accuracy: Boolean(body.certify_accuracy),
-      comments: toString(body.comments).trim(),
-    },
-    raw_form_data: body,
-  }
-
-  if (!webhookUrl) {
-    return NextResponse.json({
-      ok: true,
-      mocked: true,
-      payload: normalizedPayload,
-      message: "Webhook not configured yet. Local preview submission accepted.",
-    })
-  }
+  const manufacturers = [
+    toString(body.manufacturer_primary),
+    toString(body.manufacturer_secondary),
+    toString(body.manufacturer_extra_1),
+    toString(body.manufacturer_extra_2),
+    toString(body.manufacturer_extra_3),
+    toString(body.manufacturer_extra_4),
+  ].map((m) => m.trim()).filter(Boolean)
 
   try {
-    const n8nRes = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(normalizedPayload),
+    // 1. Insert main submission row
+    const [submission] = await sbPost(supabaseUrl, supabaseKey, "submissions", {
+      source: "mi-leads-site",
+      submission_type: "rep_signup",
+      status: "received",
+      raw_form_data_json: body,
     })
+    const submissionId = submission.id as string
 
-    if (!n8nRes.ok) {
-      console.error("n8n webhook returned", n8nRes.status)
-      return NextResponse.json({ error: "Failed to submit lead" }, { status: 502 })
-    }
+    // 2. Insert all child records in parallel
+    await Promise.all([
+      sbPost(supabaseUrl, supabaseKey, "contacts", {
+        submission_id: submissionId,
+        first_name: toString(body.first_name).trim(),
+        last_name: toString(body.last_name).trim(),
+        nickname: toString(body.nickname).trim() || null,
+        phone: toString(body.phone).trim(),
+        email: toString(body.email).trim(),
+      }),
+      sbPost(supabaseUrl, supabaseKey, "dealerships", {
+        submission_id: submissionId,
+        name: toString(body.dealership_name).trim(),
+        address_line_1: toString(body.address_line_1).trim(),
+        address_line_2: toString(body.address_line_2).trim() || null,
+        city: toString(body.city).trim(),
+        state: toString(body.state).trim(),
+        postal: toString(body.postal).trim(),
+        branded_dealership: toString(body.branded_dealership).trim() || null,
+        dealership_size: toString(body.dealership_size).trim() || null,
+        dealership_sales: toString(body.dealership_sales).trim() || null,
+      }),
+      sbPost(supabaseUrl, supabaseKey, "applicant_profiles", {
+        submission_id: submissionId,
+        sales_license: toString(body.sales_license).trim(),
+        license_process: toString(body.license_process).trim() || null,
+        experience: toString(body.experience).trim(),
+        personal_sales: toString(body.personal_sales).trim(),
+        limited_brands: toString(body.limited_brands).trim() || null,
+        limited_brand_names: toString(body.limited_brand_names).trim() || null,
+      }),
+      sbPost(supabaseUrl, supabaseKey, "submission_preferences", {
+        submission_id: submissionId,
+        wants_forum: toString(body.wants_forum).trim() || null,
+        wants_updates: toString(body.wants_updates).trim() || null,
+        beta_interest: toString(body.beta_interest).trim() || null,
+        nda_comfort: toString(body.nda_comfort).trim() || null,
+        phone_platform: toString(body.phone_platform).trim() || null,
+        certify_accuracy: Boolean(body.certify_accuracy),
+        comments: toString(body.comments).trim() || null,
+      }),
+      sbPost(supabaseUrl, supabaseKey, "submission_attribution", {
+        submission_id: submissionId,
+        hear_about_us: toString(body.hear_about_us).trim(),
+        referral_first_name: toString(body.referral_first_name).trim() || null,
+        referral_last_name: toString(body.referral_last_name).trim() || null,
+        knows_anyone: toString(body.knows_anyone).trim() || null,
+      }),
+      // Dealership specializations
+      ...toStringArray(body.specializations).map((value) =>
+        sbPost(supabaseUrl, supabaseKey, "submission_specializations", {
+          submission_id: submissionId,
+          scope: "dealership",
+          value,
+        }),
+      ),
+      // Personal specializations
+      ...toStringArray(body.personal_specializations).map((value) =>
+        sbPost(supabaseUrl, supabaseKey, "submission_specializations", {
+          submission_id: submissionId,
+          scope: "personal",
+          value,
+        }),
+      ),
+      // Manufacturers
+      ...manufacturers.map((manufacturer_name, index) =>
+        sbPost(supabaseUrl, supabaseKey, "submission_manufacturers", {
+          submission_id: submissionId,
+          manufacturer_name,
+          position: index + 1,
+        }),
+      ),
+      // Referrals
+      ...referrals.map((row) =>
+        sbPost(supabaseUrl, supabaseKey, "submission_referrals", {
+          submission_id: submissionId,
+          ...row,
+        }),
+      ),
+    ])
 
     return NextResponse.json({ ok: true })
   } catch (err) {
-    console.error("n8n fetch failed:", err)
-    return NextResponse.json({ error: "Failed to reach webhook" }, { status: 502 })
+    console.error("Supabase insert failed:", err)
+    return NextResponse.json({ error: "Failed to save submission" }, { status: 502 })
   }
 }
