@@ -484,6 +484,9 @@ export default function LeadForm() {
         <p style={{ margin: 0, fontSize: 13, color: "rgba(240,238,255,0.28)", lineHeight: 1.6 }}>
           Keep an eye out for a confirmation text — reply <strong style={{ color: "rgba(240,238,255,0.5)" }}>C</strong> to confirm your spot.
         </p>
+        <p style={{ margin: 0, fontSize: 13, color: "rgba(240,238,255,0.28)", lineHeight: 1.6 }}>
+          If you don't see the confirmation email, check your spam or junk folder.
+        </p>
       </div>
     )
   }
