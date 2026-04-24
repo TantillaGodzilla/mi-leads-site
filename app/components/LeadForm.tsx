@@ -485,7 +485,7 @@ export default function LeadForm() {
           Keep an eye out for a confirmation text — reply <strong style={{ color: "rgba(240,238,255,0.5)" }}>C</strong> to confirm your spot.
         </p>
         <p style={{ margin: 0, fontSize: 13, color: "rgba(240,238,255,0.28)", lineHeight: 1.6 }}>
-          If you don't see the confirmation email, check your spam or junk folder.
+          iPhone users: if you don't receive the text, check your <strong style={{ color: "rgba(240,238,255,0.5)" }}>filtered messages</strong> or unknown senders folder — iOS sometimes filters texts from Android numbers.
         </p>
       </div>
     )
